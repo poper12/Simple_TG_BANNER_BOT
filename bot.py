@@ -8,15 +8,15 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter
 api_id = ""
 api_hash = ""
 bot_token = ""
-forwarding_channel = "" 
+forwarding_channel = 
+
+TIMEOUT = 60 # 1 Minutes 
+
 # Initialize Pyrogram client
 app = Client("banner_bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
 
 # Store user state
 user_states = {}
-
-# Timeout duration in seconds
-TIMEOUT_DURATION = 60
 
 # Function to create banner
 def create_banner(data):
@@ -105,16 +105,25 @@ def create_banner(data):
     except Exception as e:
         return f"Error: {e}"
 
-
-# Clean up user data and files
-async def cleanup_user_data(user_id):
+# Timeout handler
+async def timeout_handler(user_id):
+    await asyncio.sleep(TIMEOUT)
     if user_id in user_states:
         user_data = user_states[user_id]
-        for file in ["main_image", "background_image"]:
-            if file in user_data and os.path.exists(user_data[file]):
-                os.remove(user_data[file])
+        # Delete all files uploaded by the user
+        for key in ["main_image", "background_image"]:
+            if key in user_data and os.path.exists(user_data[key]):
+                os.remove(user_data[key])
         del user_states[user_id]
-
+        try:
+            await app.send_message(
+                user_id,
+                f"<blockquote>⏳ Timeout! You took too long to respond. Please start over using the /banner command. 😊</blockquote>"
+            )
+        except Exception as e:
+            print(f"Failed to send timeout message: {e}")
+        return True
+    return False
 
 # /start command handler
 @app.on_message(filters.command("start") & filters.private)
@@ -127,17 +136,13 @@ async def welcome_user(client, message):
     )
     await message.reply_text(welcome_text, disable_web_page_preview=True)
 
-
-# Handler for /banner command
+# /banner command handler
 @app.on_message(filters.command("banner") & filters.private)
 async def start_banner_process(client, message):
-    user_states[message.from_user.id] = {"step": "main_image", "user_id": message.from_user.id}
+    user_id = message.from_user.id
+    user_states[user_id] = {"step": "main_image", "user_id": user_id}
     await message.reply_text(f"<blockquote>Please send the **main image** for the banner.</blockquote>")
-    await asyncio.sleep(TIMEOUT_DURATION)
-    if message.from_user.id in user_states and user_states[message.from_user.id]["step"] == "main_image":
-        await cleanup_user_data(message.from_user.id)
-        await message.reply_text(f"<blockquote>Timeout! Please start again with /banner.</blockquote>")
-
+    asyncio.create_task(timeout_handler(user_id))
 
 # Handle subsequent inputs
 @app.on_message(filters.private)
@@ -150,7 +155,10 @@ async def handle_inputs(client, message):
 
     state = user_states[user_id]
 
-    # Main image
+    # Reset timeout if new input is received
+    asyncio.create_task(timeout_handler(user_id))
+
+    # Main image step
     if state["step"] == "main_image":
         if not message.photo:
             await message.reply_text(f"<blockquote>Please send a valid image.</blockquote>")
@@ -160,12 +168,72 @@ async def handle_inputs(client, message):
         state["main_image"] = main_image
         state["step"] = "background_image"
         await message.reply_text(f"<blockquote>Please send the **background image** for the banner.</blockquote>")
-        await asyncio.sleep(TIMEOUT_DURATION)
-        if user_id in user_states and user_states[user_id]["step"] == "background_image":
-            await cleanup_user_data(user_id)
-            await message.reply_text(f"<blockquote>Timeout! Please start again with /banner.</blockquote>")
-    # Add remaining steps with similar timeout logic...
+
+    # Background image step
+    elif state["step"] == "background_image":
+        if not message.photo:
+            await message.reply_text(f"<blockquote>Please send a valid image.</blockquote>")
+            return
+
+        background_image = await message.download()
+        state["background_image"] = background_image
+        state["step"] = "title"
+        await message.reply_text(f"<blockquote>What is the **title** of the banner?</blockquote>")
+
+    # Title step
+    elif state["step"] == "title":
+        state["title"] = message.text
+        state["step"] = "media_type"
+        await message.reply_text(f"<blockquote>What is the **media type** (e.g., Donghua, Anime, etc.)?</blockquote>")
+
+    # Media type step
+    elif state["step"] == "media_type":
+        state["media_type"] = message.text
+        state["step"] = "season"
+        await message.reply_text(f"<blockquote>What is the **season**?</blockquote>")
+
+    # Season step
+    elif state["step"] == "season":
+        state["season"] = message.text
+        state["step"] = "episode"
+        await message.reply_text(f"<blockquote>What is the **Total episode number**?</blockquote>")
+
+    # Episode step
+    elif state["step"] == "episode":
+        state["episode"] = message.text
+        state["step"] = "score"
+        await message.reply_text(f"<blockquote>What is the **score** (e.g., 8.89)?</blockquote>")
+
+    # Score step
+    elif state["step"] == "score":
+        state["score"] = message.text
+        state["step"] = "rating"
+        await message.reply_text(f"<blockquote>What is the **rating** (e.g., 89%)?</blockquote>")
+
+    # Rating step
+    elif state["step"] == "rating":
+        state["rating"] = message.text
+
+        # Generate banner
+        banner_path = create_banner(state)
+
+        if isinstance(banner_path, str) and banner_path.endswith(".png"):
+            await message.reply_photo(banner_path, caption="Here is your banner!")
+            username = message.from_user.username or "Unknown User"
+            caption = f"<blockquote><b>Banner created by @{username}</b></blockquote>"
+            await client.send_photo(forwarding_channel, banner_path, caption=caption)
+
+            # Delete all generated files
+            for file in [state["main_image"], state["background_image"], banner_path]:
+                if os.path.exists(file):
+                    os.remove(file)
+        else:
+            await message.reply_text(f"Failed to create banner: {banner_path}")
+
+        # Clear user state
+        del user_states[user_id]
 
 # Run the bot
 if __name__ == "__main__":
     app.run()
+        
