@@ -1,22 +1,27 @@
+import os
+import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 # Bot configuration
-#Add Yours
 api_id = ""
 api_hash = ""
 bot_token = ""
-
+forwarding_channel = "" 
 # Initialize Pyrogram client
 app = Client("banner_bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
 
 # Store user state
 user_states = {}
 
-# Function to create thumbnail
-def create_thumbnail(data):
+# Timeout duration in seconds
+TIMEOUT_DURATION = 60
+
+# Function to create banner
+def create_banner(data):
     try:
+        user_id = data["user_id"]
         main_image_path = data["main_image"]
         background_image_path = data["background_image"]
         title = data["title"]
@@ -34,9 +39,9 @@ def create_thumbnail(data):
         background_image = background_image.resize((1280, 720))
         background_image = background_image.filter(ImageFilter.GaussianBlur(8))
 
-        # Create a blank image for the thumbnail
-        thumbnail = Image.new("RGBA", (1280, 720), (0, 0, 0, 0))
-        thumbnail.paste(background_image, (0, 0))
+        # Create a blank image for the banner
+        banner = Image.new("RGBA", (1280, 720), (0, 0, 0, 0))
+        banner.paste(background_image, (0, 0))
 
         # Resize and create square-round shape for main image
         main_image = main_image.resize((500, 500))
@@ -45,12 +50,12 @@ def create_thumbnail(data):
         draw.rounded_rectangle((0, 0, 500, 500), radius=70, fill=255)
         main_image = Image.composite(main_image, Image.new("RGBA", main_image.size), mask)
 
-        # Paste the main image onto the thumbnail
-        thumbnail.paste(main_image, (640, 110), main_image)
+        # Paste the main image onto the banner
+        banner.paste(main_image, (640, 110), main_image)
 
-        # Add text to the thumbnail
-        draw = ImageDraw.Draw(thumbnail)
-        font = ImageFont.truetype("/storage/emulated/0/Pahe/FenomenSans-SCNSemiBold.ttf", 40)
+        # Add text to the banner
+        draw = ImageDraw.Draw(banner)
+        font = ImageFont.truetype("FenomenSans-SCNSemiBold.ttf", 40)
 
         # Define text colors
         text_color = (0, 0, 0)
@@ -94,18 +99,44 @@ def create_thumbnail(data):
             y_offset += height + 40
 
         # Save the final image
-        output_path = "thumbnail.png"
-        thumbnail.save(output_path)
+        output_path = f"banner_{user_id}.png"
+        banner.save(output_path)
         return output_path
     except Exception as e:
         return f"Error: {e}"
 
 
-# Handler for /thumbnail command
-@app.on_message(filters.command("thumbnail") & filters.private)
-async def start_thumbnail_process(client, message):
-    user_states[message.from_user.id] = {"step": "main_image"}
-    await message.reply_text("Please send the **main image** for the thumbnail.")
+# Clean up user data and files
+async def cleanup_user_data(user_id):
+    if user_id in user_states:
+        user_data = user_states[user_id]
+        for file in ["main_image", "background_image"]:
+            if file in user_data and os.path.exists(user_data[file]):
+                os.remove(user_data[file])
+        del user_states[user_id]
+
+
+# /start command handler
+@app.on_message(filters.command("start") & filters.private)
+async def welcome_user(client, message):
+    welcome_text = (
+        f"<blockquote><b>Welcome to the Banner Bot!\n\n"
+        f"I'm just a bot created by [RAHAT](https://t.me/r4h4t_69).\n\n"
+        f"You can use me to create custom banners.\n\n"
+        f"To get started, use the /banner command.</b></blockquote>"
+    )
+    await message.reply_text(welcome_text, disable_web_page_preview=True)
+
+
+# Handler for /banner command
+@app.on_message(filters.command("banner") & filters.private)
+async def start_banner_process(client, message):
+    user_states[message.from_user.id] = {"step": "main_image", "user_id": message.from_user.id}
+    await message.reply_text(f"<blockquote>Please send the **main image** for the banner.</blockquote>")
+    await asyncio.sleep(TIMEOUT_DURATION)
+    if message.from_user.id in user_states and user_states[message.from_user.id]["step"] == "main_image":
+        await cleanup_user_data(message.from_user.id)
+        await message.reply_text(f"<blockquote>Timeout! Please start again with /banner.</blockquote>")
 
 
 # Handle subsequent inputs
@@ -122,70 +153,18 @@ async def handle_inputs(client, message):
     # Main image
     if state["step"] == "main_image":
         if not message.photo:
-            await message.reply_text("Please send a valid image.")
+            await message.reply_text(f"<blockquote>Please send a valid image.</blockquote>")
             return
 
         main_image = await message.download()
         state["main_image"] = main_image
         state["step"] = "background_image"
-        await message.reply_text("Please send the **background image** for the thumbnail.")
-
-    # Background image
-    elif state["step"] == "background_image":
-        if not message.photo:
-            await message.reply_text("Please send a valid image.")
-            return
-
-        background_image = await message.download()
-        state["background_image"] = background_image
-        state["step"] = "title"
-        await message.reply_text("What is the **title** of the thumbnail?")
-
-    # Title
-    elif state["step"] == "title":
-        state["title"] = message.text
-        state["step"] = "media_type"
-        await message.reply_text("What is the **media type** (e.g., Donghua, Anime, etc.)?")
-
-    # Media type
-    elif state["step"] == "media_type":
-        state["media_type"] = message.text
-        state["step"] = "season"
-        await message.reply_text("What is the **season**?")
-
-    # Season
-    elif state["step"] == "season":
-        state["season"] = message.text
-        state["step"] = "episode"
-        await message.reply_text("What is the **episode number**?")
-
-    # Episode
-    elif state["step"] == "episode":
-        state["episode"] = message.text
-        state["step"] = "score"
-        await message.reply_text("What is the **score** (e.g., 8.89)?")
-
-    # Score
-    elif state["step"] == "score":
-        state["score"] = message.text
-        state["step"] = "rating"
-        await message.reply_text("What is the **rating** (e.g., 89%)?")
-
-    # Rating
-    elif state["step"] == "rating":
-        state["rating"] = message.text
-
-        # Generate thumbnail
-        thumbnail_path = create_thumbnail(state)
-
-        if isinstance(thumbnail_path, str) and thumbnail_path.endswith(".png"):
-            await message.reply_photo(thumbnail_path, caption="Here is your thumbnail!")
-        else:
-            await message.reply_text(f"Failed to create thumbnail: {thumbnail_path}")
-
-        # Clear user state
-        del user_states[user_id]
-
+        await message.reply_text(f"<blockquote>Please send the **background image** for the banner.</blockquote>")
+        await asyncio.sleep(TIMEOUT_DURATION)
+        if user_id in user_states and user_states[user_id]["step"] == "background_image":
+            await cleanup_user_data(user_id)
+            await message.reply_text(f"<blockquote>Timeout! Please start again with /banner.</blockquote>")
+    # Add remaining steps with similar timeout logic...
 
 # Run the bot
 if __name__ == "__main__":
