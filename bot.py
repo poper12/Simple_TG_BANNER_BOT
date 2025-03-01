@@ -5,10 +5,10 @@ from pyrogram.types import Message
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 # Bot configuration
-api_id = ""
-api_hash = ""
-bot_token = ""
-forwarding_channel = 
+api_id = "18196402"
+api_hash = "a184b91d39fc85265e232e7c323fac45"
+bot_token = "7717441829:AAHNhP853L6wFR13-vqG5nlDECq5J1xKl3c"
+forwarding_channel = -1002432294589
 
 TIMEOUT = 60 # 1 Minutes 
 
